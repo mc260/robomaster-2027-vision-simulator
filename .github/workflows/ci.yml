@@ -1,0 +1,34 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux / Qt 6 / OpenCV 4
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build qt6-base-dev libopencv-dev
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Test rules and desktop controls (no camera)
+        run: ctest --test-dir build --output-on-failure
+      - name: Upload Linux executable and test log
+        uses: actions/upload-artifact@v4
+        with:
+          name: basevision-linux-x64
+          path: |
+            build/base_vision
+            build/Testing/Temporary/LastTest.log
+            README.md
+            LICENSE
