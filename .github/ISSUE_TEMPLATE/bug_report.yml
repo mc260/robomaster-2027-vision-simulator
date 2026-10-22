@@ -1,0 +1,30 @@
+name: 问题反馈 / Bug report
+description: 报告画质、摄像头、帧率或构建问题
+title: "[Bug] "
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境 / Environment
+      description: 操作系统、摄像头型号、Qt/OpenCV 版本
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: 运行参数 / Settings
+      description: 血量、采集尺寸、目标/实际FPS、原图或处理图、自适应或1:1模式
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤与预期结果 / Steps and expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果 / Actual behavior
+    validations:
+      required: true
