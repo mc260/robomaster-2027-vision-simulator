@@ -1,0 +1,10 @@
+/build*/
+/dist/
+/.cache/
+*.user
+__pycache__/
+*.pyc
+*.log
+.env
+.env.*
+CMakeUserPresets.json
