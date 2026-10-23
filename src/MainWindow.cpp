@@ -308,7 +308,10 @@ void MainWindow::startCamera()
     activeTargetFps_ = fpsSpin_->value();
     setState(State::Starting);
     preview_->clear(QStringLiteral("正在启动摄像头…"));
-    setStatus(QStringLiteral("正在请求 1920 × 1080、%1 FPS，设备不支持时将自动回退…").arg(activeTargetFps_));
+    const bool industrial = devices_[deviceBox_->currentIndex()].backend == CameraBackend::HikrobotMvs;
+    setStatus(industrial
+        ? QStringLiteral("正在通过海康 MVS 请求完整视野、%1 FPS，随后适配至 1920 × 1080…").arg(activeTargetFps_)
+        : QStringLiteral("正在请求 1920 × 1080、%1 FPS，设备不支持时将自动回退…").arg(activeTargetFps_));
     engine_->setHealth(healthSpin_->value());
     engine_->setOriginal(originalButton_->isChecked());
     engine_->start(devices_[deviceBox_->currentIndex()], activeTargetFps_);

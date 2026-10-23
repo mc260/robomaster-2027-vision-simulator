@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory = $true)][string]$OpenCVDir,
     [string]$OpenCVBin = "",
     [string]$BuildDir = "",
+    [string]$MvsRoot = "",
     [switch]$RunTests
 )
 $ErrorActionPreference = "Stop"
@@ -26,10 +27,12 @@ $runtimeDirs = (Join-Path $QtRoot "bin").Replace('\', '/')
 if ($OpenCVBin) { $runtimeDirs += ";$((Resolve-Path $OpenCVBin).Path.Replace('\', '/'))" }
 # Run this script in the x64 Native Tools Command Prompt / Developer PowerShell.
 $testSetting = if ($RunTests) { "ON" } else { "OFF" }
+$mvsArgs = @()
+if ($MvsRoot) { $mvsArgs += "-DMVS_ROOT=$((Resolve-Path $MvsRoot).Path)" }
 & cmake -S $projectRoot -B $BuildDir -G Ninja `
     "-DCMAKE_BUILD_TYPE=Release" "-DBUILD_TESTING=$testSetting" `
     "-DCMAKE_PREFIX_PATH=$QtRoot" "-DOpenCV_DIR=$OpenCVDir" `
-    "-DBASEVISION_RUNTIME_DIRS=$runtimeDirs"
+    "-DBASEVISION_RUNTIME_DIRS=$runtimeDirs" @mvsArgs
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed." }
 & cmake --build $BuildDir --parallel 4
 if ($LASTEXITCODE -ne 0) { throw "Build failed." }

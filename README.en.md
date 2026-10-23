@@ -11,6 +11,7 @@ A C++ desktop camera simulator for testing the **RoboMaster 2027** base-health v
 ## Features
 
 - Live camera input; HP slider and numeric input from 0 to 10000.
+- Hikrobot USB industrial cameras via an installed MVS SDK; hardware-tested with MV-CS060-10UC-PRO. See [MVS setup](docs/BUILDING.md#海康-usb-工业相机mvs).
 - Area-average downsampling followed by bilinear upsampling.
 - Original/processed toggle with identical framing.
 - Optional 1:1 inspection: one image pixel per physical screen pixel, including HiDPI, with scrolling.
@@ -63,3 +64,5 @@ Tests cover endpoint dimensions, rounding, letterboxing, a one-pixel checkerboar
 Camera compatibility reports, Windows build results and rule-update reports are welcome. If this helps your RM team, a Star helps others discover the project. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Source code: MIT. Qt/OpenCV and bundled dependencies retain their own licenses. Rule documents and RoboMaster branding belong to their respective owners.
+
+Hikrobot support requires MVS 4.7+ development headers at build time and the vendor runtime/drivers on the target computer. Detection is optional; ordinary webcams work without MVS. Full sensor coverage is fitted to the 1920×1080 baseline before the same AREA→LINEAR simulation. The proprietary SDK is not included in this repository or its packages.

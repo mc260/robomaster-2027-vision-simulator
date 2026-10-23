@@ -104,6 +104,24 @@ private slots:
         QCOMPARE(rendered, image); // Exact display pixels, also checked at DPR=2.
     }
 
+    void missingHikrobotCanBeRetried()
+    {
+        vision::CameraEngine engine;
+        QSignalSpy failed(&engine, &vision::CameraEngine::failed);
+        QSignalSpy finished(&engine, &vision::CameraEngine::finished);
+        QSignalSpy opened(&engine, &vision::CameraEngine::opened);
+        const vision::CameraDevice missing{QStringLiteral("mvs:usb:basevision-missing-device"),
+            QStringLiteral("missing Hikrobot"), -1, vision::CameraBackend::HikrobotMvs};
+        for (int attempt = 1; attempt <= 2; ++attempt) {
+            engine.start(missing, 60);
+            QTRY_COMPARE_WITH_TIMEOUT(finished.count(), attempt, 8000);
+            engine.joinFinished();
+            QCOMPARE(failed.count(), attempt);
+            QCOMPARE(opened.count(), 0);
+            QVERIFY(!engine.latestPreview());
+        }
+    }
+
     void pixelInspectionScrollsAndReturnsToFit()
     {
         vision::MainWindow window;
@@ -135,6 +153,13 @@ private slots:
         auto* stop = window.findChild<QPushButton*>("stopButton");
         auto* fps = window.findChild<QSpinBox*>("fpsSpin");
         auto* devices = window.findChild<QComboBox*>("deviceBox");
+        if (qgetenv("BASEVISION_TEST_CAMERA_BACKEND") == "mvs") {
+            int index = -1;
+            for (int row = 0; row < devices->count(); ++row)
+                if (devices->itemData(row).toString().startsWith(QStringLiteral("mvs:usb:"))) { index = row; break; }
+            QVERIFY2(index >= 0, "No Hikrobot camera in the device dropdown");
+            devices->setCurrentIndex(index);
+        }
         auto* health = window.findChild<QSpinBox*>("healthSpin");
         auto* preview = window.findChild<vision::PreviewWidget*>("preview");
         QVERIFY(start->isEnabled());

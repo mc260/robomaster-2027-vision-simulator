@@ -25,8 +25,33 @@ target_link_libraries(vision_image PUBLIC ${OpenCV_LIBS})
 
 add_library(vision_camera STATIC
     src/CameraDevices.cpp src/CameraDevices.h
-    src/CameraEngine.cpp src/CameraEngine.h)
+    src/CameraEngine.cpp src/CameraEngine.h
+    src/HikrobotCamera.cpp src/HikrobotCamera.h)
 target_link_libraries(vision_camera PUBLIC vision_image Qt6::Gui Threads::Threads)
+
+option(BASEVISION_ENABLE_MVS "Enable Hikrobot USB cameras when MVS headers are installed" ON)
+set(MVS_ROOT "" CACHE PATH "Hikrobot MVS SDK root (contains include/ or Includes/)")
+if(BASEVISION_ENABLE_MVS)
+    find_path(MVS_INCLUDE_DIR MvCameraControl.h
+        HINTS "${MVS_ROOT}" "$ENV{MVCAM_SDK_PATH}"
+        PATHS /opt/MVS "C:/Program Files (x86)/MVS/Development"
+        PATH_SUFFIXES include Includes)
+    if(MVS_INCLUDE_DIR)
+        target_include_directories(vision_camera SYSTEM PRIVATE "${MVS_INCLUDE_DIR}")
+        target_compile_definitions(vision_camera PRIVATE BASEVISION_HAS_MVS=1)
+        # Runtime loading keeps normal webcams usable without an installed MVS runtime.
+        find_library(MVS_RUNTIME_LIBRARY NAMES MvCameraControl
+            HINTS "${MVS_ROOT}" "$ENV{MVCAM_SDK_PATH}"
+            PATHS /opt/MVS PATH_SUFFIXES lib/64 lib/aarch64)
+        if(MVS_RUNTIME_LIBRARY AND NOT WIN32)
+            target_compile_definitions(vision_camera PRIVATE
+                BASEVISION_MVS_LIBRARY_HINT="${MVS_RUNTIME_LIBRARY}")
+        endif()
+        message(STATUS "Hikrobot USB support enabled (MVS runtime loaded on demand)")
+    else()
+        message(STATUS "MVS SDK headers not found; building with system webcams only")
+    endif()
+endif()
 if(WIN32)
     target_link_libraries(vision_camera PRIVATE ole32 oleaut32 strmiids)
 endif()

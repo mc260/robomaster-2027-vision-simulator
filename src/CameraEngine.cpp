@@ -1,5 +1,6 @@
 #include "CameraEngine.h"
 #include "ImageProcessor.h"
+#include "HikrobotCamera.h"
 
 #include <algorithm>
 #include <chrono>
@@ -80,77 +81,111 @@ void CameraEngine::reportFailure(const QString& message)
 void CameraEngine::captureLoop(CameraDevice device, int targetFps)
 {
     try {
-        cv::VideoCapture capture;
-        auto openDevice = [&]() -> bool {
-#ifdef Q_OS_WIN
-            // Re-enumerate immediately before opening to handle changed indices.
-            const auto devices = enumerateCameras();
-            const auto match = std::find_if(devices.cbegin(), devices.cend(),
-                [&device](const CameraDevice& candidate) { return candidate.id == device.id; });
-            return match != devices.cend() && capture.open(match->backendIndex, cv::CAP_DSHOW);
-#else
-            return capture.open(device.id.toStdString(), cv::CAP_V4L2);
-#endif
-        };
-        if (!openDevice()) {
-            if (!stop_) reportFailure(QStringLiteral("无法打开摄像头。请检查设备是否被占用、系统摄像头权限及连接状态。"));
-        } else if (!stop_) {
-            capture.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
-            capture.set(cv::CAP_PROP_FRAME_WIDTH, BaseWidth);
-            capture.set(cv::CAP_PROP_FRAME_HEIGHT, BaseHeight);
-            capture.set(cv::CAP_PROP_FPS, targetFps);
-            // Two driver buffers keep acquisition running while one is decoded.
-            // A single V4L2 buffer halves delivery on some UVC cameras. The
-            // application's latest-frame mailboxes remain bounded to one each.
-            capture.set(cv::CAP_PROP_BUFFERSIZE, 2); // Best effort, backend-dependent.
-
-            cv::Mat first;
-            bool hasFirst = !stop_ && capture.read(first) && !first.empty();
-            if (!hasFirst && !stop_) {
-                // Some backends cannot stream after rejecting a requested mode.
-                // Reopen with the camera's working default resolution/format.
-                capture.release();
-                if (openDevice()) {
-                    capture.set(cv::CAP_PROP_FPS, targetFps);
-                    capture.set(cv::CAP_PROP_BUFFERSIZE, 2);
-                    hasFirst = !stop_ && capture.read(first) && !first.empty();
-                }
-            }
-            if (!hasFirst) {
-                if (!stop_) reportFailure(QStringLiteral("摄像头未返回有效画面，请停止其他占用摄像头的程序或更换设备后重试。"));
-            } else if (!stop_) {
-                emit opened(QSize(first.cols, first.rows), capture.get(cv::CAP_PROP_FPS));
-                std::uint64_t sequence = 0;
-                auto publish = [this, &sequence](cv::Mat image) {
-                    if (image.type() == CV_8UC4) cv::cvtColor(image, image, cv::COLOR_BGRA2BGR);
-                    else if (image.type() == CV_8UC1) cv::cvtColor(image, image, cv::COLOR_GRAY2BGR);
-                    if (image.type() != CV_8UC3)
-                        throw std::runtime_error("Unsupported camera pixel format");
-                    auto frame = std::make_shared<RawFrame>(RawFrame{std::move(image), ++sequence});
-                    {
-                        const std::lock_guard<std::mutex> lock(mutex_);
-                        latestInput_ = std::move(frame);
-                    }
-                    changed_.notify_one();
-                };
-                publish(std::move(first));
-                while (!stop_) {
-                    cv::Mat frame;
-                    if (!capture.read(frame) || frame.empty()) {
-                        if (!stop_) reportFailure(QStringLiteral("摄像头读取失败或连接已断开。请检查设备后重新点击启动。"));
-                        break;
-                    }
-                    if (!stop_) publish(std::move(frame));
-                }
-            }
-            capture.release();
-        }
+        if (device.backend == CameraBackend::HikrobotMvs)
+            captureHikrobotCamera(device, targetFps);
+        else
+            captureSystemCamera(device, targetFps);
     } catch (const std::exception& error) {
         if (!stop_) reportFailure(QStringLiteral("摄像头异常：%1").arg(QString::fromUtf8(error.what())));
     }
     requestStop();
     if (processingThread_.joinable()) processingThread_.join();
     emit finished();
+}
+
+void CameraEngine::publishInput(cv::Mat image, std::uint64_t& sequence)
+{
+    if (image.type() == CV_8UC4) cv::cvtColor(image, image, cv::COLOR_BGRA2BGR);
+    else if (image.type() == CV_8UC1) cv::cvtColor(image, image, cv::COLOR_GRAY2BGR);
+    if (image.type() != CV_8UC3)
+        throw std::runtime_error("Unsupported camera pixel format");
+    auto frame = std::make_shared<RawFrame>(RawFrame{std::move(image), ++sequence});
+    {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        latestInput_ = std::move(frame);
+    }
+    changed_.notify_one();
+}
+
+void CameraEngine::captureHikrobotCamera(const CameraDevice& device, int targetFps)
+{
+    HikrobotCamera camera;
+    if (stop_) return;
+    camera.open(device, targetFps);
+    std::uint64_t sequence = 0;
+    auto lastFrame = Clock::now();
+    while (!stop_) {
+        cv::Mat frame;
+        if (!camera.read(frame)) {
+            if (Clock::now() - lastFrame > std::chrono::seconds(5)) {
+                if (!stop_) reportFailure(QStringLiteral("海康相机连续 5 秒未返回图像。请检查 USB 带宽、曝光设置及设备连接后重新启动。"));
+                break;
+            }
+            continue;
+        }
+        if (stop_) break;
+        lastFrame = Clock::now();
+        if (sequence == 0)
+            emit opened(QSize(frame.cols, frame.rows), camera.reportedFps());
+        publishInput(std::move(frame), sequence);
+    }
+}
+
+void CameraEngine::captureSystemCamera(const CameraDevice& device, int targetFps)
+{
+    cv::VideoCapture capture;
+    auto openDevice = [&]() -> bool {
+#ifdef Q_OS_WIN
+        // Re-enumerate immediately before opening to handle changed indices.
+        const auto devices = enumerateCameras();
+        const auto match = std::find_if(devices.cbegin(), devices.cend(),
+            [&device](const CameraDevice& candidate) { return candidate.id == device.id; });
+        return match != devices.cend() && capture.open(match->backendIndex, cv::CAP_DSHOW);
+#else
+        return capture.open(device.id.toStdString(), cv::CAP_V4L2);
+#endif
+    };
+    if (!openDevice()) {
+        if (!stop_) reportFailure(QStringLiteral("无法打开摄像头。请检查设备是否被占用、系统摄像头权限及连接状态。"));
+    } else if (!stop_) {
+        capture.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
+        capture.set(cv::CAP_PROP_FRAME_WIDTH, BaseWidth);
+        capture.set(cv::CAP_PROP_FRAME_HEIGHT, BaseHeight);
+        capture.set(cv::CAP_PROP_FPS, targetFps);
+        // Two driver buffers keep acquisition running while one is decoded.
+        // A single V4L2 buffer halves delivery on some UVC cameras. The
+        // application's latest-frame mailboxes remain bounded to one each.
+        capture.set(cv::CAP_PROP_BUFFERSIZE, 2); // Best effort, backend-dependent.
+
+        cv::Mat first;
+        bool hasFirst = !stop_ && capture.read(first) && !first.empty();
+        if (!hasFirst && !stop_) {
+            // Some backends cannot stream after rejecting a requested mode.
+            // Reopen with the camera's working default resolution/format.
+            capture.release();
+            if (openDevice()) {
+                capture.set(cv::CAP_PROP_FPS, targetFps);
+                capture.set(cv::CAP_PROP_BUFFERSIZE, 2);
+                hasFirst = !stop_ && capture.read(first) && !first.empty();
+            }
+        }
+        if (!hasFirst) {
+            if (!stop_) reportFailure(QStringLiteral("摄像头未返回有效画面，请停止其他占用摄像头的程序或更换设备后重试。"));
+        } else if (!stop_) {
+            emit opened(QSize(first.cols, first.rows), capture.get(cv::CAP_PROP_FPS));
+            std::uint64_t sequence = 0;
+            publishInput(std::move(first), sequence);
+            while (!stop_) {
+                cv::Mat frame;
+                if (!capture.read(frame) || frame.empty()) {
+                    if (!stop_) reportFailure(QStringLiteral("摄像头读取失败或连接已断开。请检查设备后重新点击启动。"));
+                    break;
+                }
+                if (!stop_) publishInput(std::move(frame), sequence);
+            }
+        }
+        capture.release();
+    }
 }
 
 void CameraEngine::processingLoop(int targetFps)

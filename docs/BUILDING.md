@@ -55,7 +55,7 @@ bash scripts/run-linux.sh
 
 ## 摄像头与帧率
 
-- 优先请求 1920×1080、目标 FPS；不支持时接受驱动提供的可用模式。首次读帧失败时，重开设备尝试默认分辨率与格式。
+- 普通摄像头优先请求 1920×1080、目标 FPS；不支持时接受驱动提供的可用模式。首次读帧失败时，重开设备尝试默认分辨率与格式。
 - 目标 FPS 范围 1～240，步长 1，每次打开程序默认为 60；也是处理与预览刷新上限，实际帧率可能更低。
 - 当前 HP True Vision FHD Camera 的驱动声明支持 1920×1080 MJPG，最高 30 FPS；请求 60 并不意味着它能采集 60。
 - “实际采集尺寸”来自真正收到的帧。“设备报告 FPS”是驱动提供的值；“预览 FPS”按最近约 1 秒内实际绘制的新采集帧统计。
@@ -65,6 +65,44 @@ bash scripts/run-linux.sh
 - 停止与关闭窗口会等待摄像头驱动释放资源；若驱动正阻塞读帧，界面保持响应并显示释放状态。
 
 Linux 通过 V4L2 能力查询筛选有效单平面采集节点，过滤 metadata 节点，并直接按设备路径打开。Windows 使用 DirectShow 枚举与采集，保存原始枚举序号，打开前按设备标识重新匹配，避免将界面序号误作设备序号。
+
+## 海康 USB 工业相机（MVS）
+
+支持通过 MVS SDK 枚举、独占打开 USB 工业相机，设备列表显示“海康 MVS · 型号 · 序列号”。本机已实测 MV-CS060-10UC-PRO；此后端目前枚举 USB 设备。
+
+1. 安装厂商 **MVS 4.7 或更新版本**，包括开发头文件、运行库及 USB 驱动/权限规则。先确认 MVS 客户端能够打开相机，再关闭客户端释放设备。
+2. 重新构建程序。Linux 默认查找 `/opt/MVS/include`，也读取 `MVCAM_SDK_PATH`；Windows 查找 MVS 的 `Development/Includes`。自定义目录可传入 `MVS_ROOT`。
+3. 启动程序，点击“刷新”，选择“海康 MVS”，设置目标 FPS，点击“启动摄像头”。更换设备或 FPS 前先停止。
+
+Linux 自定义安装位置：
+
+```bash
+bash scripts/build-linux.sh -DMVS_ROOT=/opt/MVS
+bash scripts/run-linux.sh
+```
+
+Windows 构建脚本可追加 `-MvsRoot "C:\Program Files (x86)\MVS\Development"`，其他 Qt/OpenCV 参数同下文。运行时需安装对应架构的 MVS Runtime 与驱动，让 `MvCameraControl.dll` 及依赖位于厂商配置的搜索路径；也可将运行库目录加入 `PATH`。Windows 海康采集尚未实机验证。
+
+程序动态加载 MVS，**不随项目分发厂商 SDK**。默认支持按需检测；找不到头文件时仍能构建普通摄像头版本。构建日志应出现 `Hikrobot USB support enabled`。可用 `-DBASEVISION_ENABLE_MVS=OFF` 明确关闭。自定义运行库位置可设置环境变量 `BASEVISION_MVS_LIBRARY` 为完整的 `.so` / `.dll` 路径，相关 SDK 依赖仍需正常安装。
+
+采集行为：
+
+- 每次启动设置连续采集、关闭触发；按相机允许范围请求目标帧率，受曝光和传输带宽限制时实际帧率更低。保留已有曝光、增益与白平衡设置，不写入相机的永久用户配置。
+- 工业相机的 `Width/Height` 通常表示传感器 ROI，直接设置 1920×1080 会裁剪视野。因此尽量将偏移归零、宽高恢复为当前模式支持的最大值，接收完整视野后等比例适配到 1920×1080，再执行同一套 `INTER_AREA → INTER_LINEAR` 血量处理。
+- SDK 转换 Bayer、Mono 等输入像素格式为 BGR8，归还 SDK 缓冲后使用独立图像内存。SDK 使用 `LatestImagesOnly`，应用继续只保留最新帧。
+- 每次取帧最多等待 200 ms，以便响应停止。连续 5 秒未收到图像或 SDK 报错时停止并提示原因，等待手动重启。
+
+优先使用 USB 3.x 接口和合适的数据线。本机相机当前枚举为 **USB 2.0 / 480 Mbps**，3072×2048 全视野下实测约 6 FPS；请求 60 FPS 无法突破相机与连接的交付能力。
+
+不保存图像的真机检查：
+
+```bash
+./build/camera_smoke --list
+./build/camera_smoke --hikrobot
+QT_QPA_PLATFORM=offscreen BASEVISION_TEST_CAMERA=1 BASEVISION_TEST_CAMERA_BACKEND=mvs ./build/ui_tests
+```
+
+`--hikrobot` 明确选用海康后端，检查血量、原图、停止/重启以及 60、15、1 FPS 请求。普通 `camera_smoke` 仍使用列表第一个设备。
 
 ## Linux 构建与验证
 
@@ -140,6 +178,7 @@ Windows 源码和脚本尚未在 Windows 编译或运行验证。Linux 可执行
 ```text
 src/ImageProcessor.*  规则计算、黑边、降采样与放大
 src/CameraDevices.*   Linux / Windows 摄像头枚举
+src/HikrobotCamera.*  可选 MVS SDK 加载、海康 USB 枚举与采集
 src/CameraEngine.*    采集线程、处理线程、最新帧缓冲
 src/PreviewWidget.*   等比例预览与新帧绘制统计
 src/MainWindow.*      桌面界面、控件同步、启停状态

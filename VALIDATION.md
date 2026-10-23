@@ -38,3 +38,16 @@ OpenCV 驱动缓冲对照约 2 秒：1 个缓冲约 8.96 FPS，2 个约 17.63 FP
 Windows 的源文件、DirectShow 枚举代码、CMake、MSVC 构建与部署脚本已完成；依赖解析显式配置 Qt/OpenCV DLL 搜索目录，部署使用 windeployqt。
 
 当前无 Windows 编译和运行环境，Windows EXE 尚未构建或实测。需在 Windows 执行 README 中的构建、测试、部署流程，并验证摄像头权限、设备选择、启停和回退。
+
+## 海康 USB 工业相机接入
+
+同日新增 MVS 后端，本机 MVS Camera Control 4.7.1.3，USB 相机 MV-CS060-10UC-PRO。通过 SDK 枚举和采集，不依赖 `/dev/video*`；以设备序列号匹配相机，避免 USB 重插后枚举序号变化。
+
+- Release 构建及原有 3 个 CTest 套件全部通过，包含新加入的海康设备不存在时失败、停止完成和再次启动测试。
+- 显式设置 `BASEVISION_ENABLE_MVS=OFF` 的独立构建及 3 个 CTest 套件全部通过，验证未安装 SDK 的构建路径。
+- 同一个启用 MVS 的二进制，将 `BASEVISION_MVS_LIBRARY` 指向不存在的文件以模拟运行库缺失：3 个 CTest 套件通过；普通 HP 摄像头真机测试仍通过（首会话 4.232 秒观察到 89 帧，以 15 FPS 重启收到 18 帧）。`ldd` 确认程序没有对 MVS 的直接链接依赖。移除 SDK 相关环境变量后，默认 `/opt/MVS` 安装仍可被发现并枚举海康设备。
+- `./build/camera_smoke --hikrobot`：实际收到 **3072×2048** 帧；请求 60 FPS 时设备报告 **5.9604 FPS**，首会话 4.384 秒观察到 26 个不同帧，最后采集序号也是 26；观察到 H=10000/5000/0 和原图输出。停止后以 15 FPS 请求重启，观察到 8 帧；再次以 1 FPS 请求重启，设备报告 1 FPS，观察到 3 帧；均通过。
+- `QT_QPA_PLATFORM=offscreen BASEVISION_TEST_CAMERA=1 BASEVISION_TEST_CAMERA_BACKEND=mvs ./build/ui_tests`：9 项全部通过。设备下拉框明确选择海康设备；实际桌面预览显示 **6.0 / 60**；启动、处理图像、血量调整、1:1、原图对照、停止清空、重启以及采集中禁用设备/FPS 修改均通过。
+- `lsusb -t` 显示当前连接为 **480 Mbps**，因此全视野帧率受当前 USB 2.0 传输能力限制。未声称已测试 USB 3.x 下的最高帧率。
+
+MVS 采集设置仅用于当前设备会话，不执行 UserSetSave；不保存真实相机图像。Windows MVS 分支提供 SDK 检测、动态加载及构建参数，尚未在 Windows 编译或真机验证。

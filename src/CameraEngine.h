@@ -43,6 +43,9 @@ signals:
 private:
     struct RawFrame { cv::Mat image; std::uint64_t sequence; };
     void captureLoop(CameraDevice device, int targetFps);
+    void captureSystemCamera(const CameraDevice& device, int targetFps);
+    void captureHikrobotCamera(const CameraDevice& device, int targetFps);
+    void publishInput(cv::Mat image, std::uint64_t& sequence);
     void processingLoop(int targetFps);
     void reportFailure(const QString& message);
 

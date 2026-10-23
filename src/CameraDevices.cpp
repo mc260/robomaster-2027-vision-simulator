@@ -1,4 +1,5 @@
 #include "CameraDevices.h"
+#include "HikrobotCamera.h"
 
 #include <algorithm>
 #include <QDir>
@@ -44,7 +45,7 @@ QString property(IPropertyBag* bag, const wchar_t* key)
 } // namespace
 #endif
 
-QVector<CameraDevice> enumerateCameras(QString* error)
+static QVector<CameraDevice> enumerateSystemCameras(QString* error)
 {
     QVector<CameraDevice> devices;
     if (error) error->clear();
@@ -111,6 +112,21 @@ QVector<CameraDevice> enumerateCameras(QString* error)
 #endif
     if (devices.isEmpty() && error && error->isEmpty())
         *error = QStringLiteral("未发现可用摄像头，请连接设备、检查摄像头权限后刷新。");
+    return devices;
+}
+
+QVector<CameraDevice> enumerateCameras(QString* error)
+{
+    QString systemError, mvsError;
+    auto devices = enumerateSystemCameras(&systemError);
+    devices += enumerateHikrobotCameras(&mvsError);
+    if (error) {
+        error->clear();
+        if (devices.isEmpty()) {
+            *error = systemError;
+            if (!mvsError.isEmpty()) *error += QLatin1Char('\n') + mvsError;
+        }
+    }
     return devices;
 }
 } // namespace vision
